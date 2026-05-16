@@ -233,6 +233,10 @@
                         <!-- NOTHING -->
                       </select>
                       <button class="btn btn-primary btn-sm" type="button" id="serial-add-device" title="Add new device"> <i class="fas fa-plus"></i> Add </button>
+					   <!--
+                          Adds a togable button allowing to conect to BLE device
+					   -->
+					  <button class="btn btn-primary btn-sm" type="button" id="ble-add-device" title="Add new BLE device" style="display: inline-block;"> <i class="fab fa-bluetooth"></i> BLE </button>
 
                     </div>
 
@@ -290,23 +294,25 @@
                   </div>
 
                   <div class="col">
+					
                     <!--
                       #####
-                      COL 2
+                      COL 2 wraper to hide on ble conection
                       #####
                     -->
-                    <p><strong>Data Order:</strong></p>
+					<div id="BLE-mode-hide">
+						<p><strong>Data Order:</strong></p>
+	
+						<p>
+						<input id="s1" class="form-check-input" type="radio" value="chron" name="serialtype" checked="checked">
+						<label class="form-check-label align-middle" for="s1">Chronological Mode (serial events in succession)</label>
+						</p>
 
-                    <p>
-                      <input id="s1" class="form-check-input" type="radio" value="chron" name="serialtype" checked="checked">
-                      <label class="form-check-label align-middle" for="s1">Chronological Mode (serial events in succession)</label>
-                    </p>
-
-                    <p>
-                      <input id="s2" class="form-check-input" type="radio" value="hist" name="serialtype">
-                      <label class="form-check-label align-middle" for="s2">Histogram Mode (serial data is histogram)</label>
-                    </p>
-
+						<p>
+						<input id="s2" class="form-check-input" type="radio" value="hist" name="serialtype">
+						<label class="form-check-label align-middle" for="s2">Histogram Mode (serial data is histogram)</label>
+						</p>
+					</div>
                     <hr>
 
                     <input type="checkbox" class="btn-check" id="toggle-evolution-chart" disabled>
@@ -1105,7 +1111,50 @@
                   </div>
                 </div>
               </div>
-            </div>
+                <!-- 
+					new tab in settings handling BLE settings
+			    --> 
+			  <div class="accordion-item">
+                <h3 class="accordion-header" id="panel6-heading">
+                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#panel6-collapse" aria-expanded="false" aria-controls="panel6-collapse">
+                    BLE Settings
+                  </button>
+                </h3>
+                <div id="panel6-collapse" class="accordion-collapse collapse" aria-labelledby="panel6-heading">
+                  <div class="accordion-body">
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" role="switch" id="ble-enable-toggle">
+                      <label class="form-check-label" for="ble-enable-toggle">Enable BLE Connection</label>
+                    </div>
+                    <p><small>Shows or hides the BLE connection button.</small></p>
+              
+                    <div class="input-group input-group-sm">
+                      <label class="input-group-text" for="ble-service-uuid">Service UUID</label>
+                      <input type="text" class="form-control" id="ble-service-uuid" spellcheck="false">
+                      <button class="btn btn-primary" type="button" id="ble-service-uuid-btn" title="Apply"> <i class="fas fa-check"></i> </button>
+                    </div>
+              
+                    <div class="input-group input-group-sm mt-2">
+                      <label class="input-group-text" for="ble-char-uuid">Characteristic UUID</label>
+                      <input type="text" class="form-control" id="ble-char-uuid" spellcheck="false">
+                      <button class="btn btn-primary" type="button" id="ble-char-uuid-btn" title="Apply"> <i class="fas fa-check"></i> </button>
+                    </div>
+              
+                    <div class="input-group input-group-sm mt-2">
+                      <label class="input-group-text" for="ble-chunk-size">Expected Chunk Size</label>
+                      <input type="number" class="form-control" id="ble-chunk-size" min="1" max="126">
+                      <label class="input-group-text" for="ble-chunk-size">Bins</label>
+                      <button class="btn btn-primary" type="button" id="ble-chunk-size-btn" title="Apply"> <i class="fas fa-check"></i> </button>
+                    </div>
+              
+                    <div class="form-check form-switch mt-2">
+                      <input class="form-check-input" type="checkbox" role="switch" id="ble-debug-toggle">
+                      <label class="form-check-label" for="ble-debug-toggle">Console Debug Mode</label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+			</div>
 
           </div>
           <div class="tab-pane fade me-2" id="info" role="tabpanel" aria-labelledby="info">
