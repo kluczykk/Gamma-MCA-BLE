@@ -2537,6 +2537,7 @@ function bindInputs(): void {
 	// Links the text boxes for Bluetooth IDs and chunk size to the "Apply" buttons and Enter key.
     'ble-service-uuid': 'bleServiceUUID',
     'ble-char-uuid': 'bleCharUUID',
+	'ble-tx-uuid': 'bleTxUUID',
     'ble-chunk-size': 'bleChunkSize'
   }
   for (const [inputId, settingsName] of Object.entries(settingsEnterPressElements)) {
@@ -2603,6 +2604,7 @@ function loadSettingsDefault(): void {
   document.getElementById('ble-add-device')!.style.display = BLEManager.enabled ? 'inline-block' : 'none';
   (<HTMLInputElement>document.getElementById('ble-service-uuid')).value = BLEManager.serviceUUID;
   (<HTMLInputElement>document.getElementById('ble-char-uuid')).value = BLEManager.charUUID;
+  (<HTMLInputElement>document.getElementById('ble-tx-uuid')).value = BLEManager.txUUID;
   (<HTMLInputElement>document.getElementById('ble-chunk-size')).value = BLEManager.chunkSize.toString();
   (<HTMLInputElement>document.getElementById('ble-debug-toggle')).checked = BLEManager.debugMode;
 
@@ -2694,6 +2696,9 @@ function loadSettingsStorage(): void {
 
   setting = loadJSON('bleCharUUID');
   if (typeof setting === 'string') BLEManager.charUUID = setting;
+  
+  setting = loadJSON('bleTxUUID');
+  if (typeof setting === 'string') BLEManager.txUUID = setting;
 
   setting = loadJSON('bleChunkSize');
   if (typeof setting === 'number') BLEManager.chunkSize = setting;
@@ -2959,6 +2964,11 @@ function changeSettings(name: string, element: HTMLInputElement | HTMLSelectElem
       result = saveJSON(name, BLEManager.charUUID);
       break;
     }
+	case 'bleTxUUID': { // <-- ADD THIS BLOCK
+      BLEManager.txUUID = stringValue.toLowerCase();
+      result = saveJSON(name, BLEManager.txUUID);
+      break;
+    }
     case 'bleChunkSize': {
       const numVal = parseInt(stringValue, 10);
       BLEManager.chunkSize = isNaN(numVal) ? 64 : numVal;
@@ -3003,6 +3013,14 @@ let serRecorder: SerialManager | BLEManager | undefined;;
 
 document.getElementById('s1')!.onchange = event => selectSerialType(<HTMLInputElement>event.target);
 document.getElementById('s2')!.onchange = event => selectSerialType(<HTMLInputElement>event.target);
+document.getElementById('ble-power-btn')!.onclick = async () => {
+  if (serRecorder instanceof BLEManager) {
+    const isNowOn = await serRecorder.togglePower();
+    const btn = document.getElementById('ble-power-btn')!;
+    btn.innerText = isNowOn ? 'Turn OFF' : 'Turn ON';
+    btn.className = isNowOn ? 'btn btn-sm btn-danger' : 'btn btn-sm btn-success';
+  }
+};
 
 function selectSerialType(button: HTMLInputElement): void {
   SerialManager.orderType = <DataOrder>button.value;
@@ -3108,12 +3126,15 @@ document.getElementById('ble-add-device')!.onclick = () => requestBLE();
 
 async function requestBLE(): Promise<void> {
 try {
-	//document.getElementById('BLE-mode-hide')!.style.display = 'none'; // TEST zniknia opcji
+	document.getElementById('BLE-mode-hide')!.style.display = 'none'; // TEST zniknia opcji
+	document.getElementById('BLE-mode-show')!.classList.remove('d-none');
     if (serRecorder?.recording) await disconnectPort(true); // Stop existing recordings
     
     serRecorder = new BLEManager();
     await serRecorder.open();
-    document.getElementById('BLE-mode-hide')!.style.display = 'none'; // hides the chrono / histo setting
+	document.getElementById('BLE-mode-hide')!.style.display = 'none'; // toggle the ble UI
+    document.getElementById('BLE-mode-show')!.classList.remove('d-none');
+    document.getElementById('ble-device-name')!.innerText = (serRecorder as BLEManager).deviceName;
     // Automatically trigger the standard UI recording sequence
     document.getElementById('record-button')!.click();
     new ToastNotification('serialConnect');
@@ -3229,7 +3250,8 @@ async function disconnectPort(stop = false): Promise<void> {
     (<HTMLButtonElement>document.getElementById('stop-button')).disabled = true;
     document.getElementById('record-button')!.classList.remove('d-none');
 	
-	document.getElementById('data-order-wrapper')!.style.display = ''; // show the histo / chrono selection on disconect
+	document.getElementById('BLE-mode-hide')!.style.display = '';  // untoggle BLE UI
+    document.getElementById('BLE-mode-show')!.classList.add('d-none');
 
     endDate = new Date();
   }
@@ -3511,6 +3533,16 @@ if (SerialManager.orderType === 'hist' || serRecorder instanceof BLEManager) {
 
     document.getElementById('avg-cps')!.innerText = 'Avg: ' + mean.toFixed(1);
     document.getElementById('avg-cps-std')!.innerHTML = ` &plusmn; ${std.toFixed(1)} cps (&#916; ${Math.round(std/mean*100)}%)`;
+
+    // --- ADD BLE DIAGNOSTICS UI UPDATE ---
+    if (serRecorder instanceof BLEManager && serRecorder.recording && serRecorder.lastFrameTime > 0) {
+      const timeSince = (performance.now() - serRecorder.lastFrameTime) / 1000;
+      document.getElementById('ble-time-since-frame')!.innerText = `${timeSince.toFixed(1)}s`;
+      document.getElementById('ble-total-frames')!.innerText = serRecorder.framesCompleted.toString();
+      document.getElementById('ble-total-missed')!.innerText = serRecorder.totalMissedChunks.toString();
+      document.getElementById('ble-frame-missed')!.innerText = serRecorder.currentFrameMissedChunks.toString();
+    }
+    // -------------------------------------
 
     updateSpectrumCounts();
 
