@@ -313,6 +313,22 @@
 						<label class="form-check-label align-middle" for="s2">Histogram Mode (serial data is histogram)</label>
 						</p>
 					</div>
+					
+					<div id="BLE-mode-show" class="d-none">
+                      <div class="d-flex justify-content-between align-items-center mb-2">
+                        <strong><span id="ble-device-name">Unknown Device</span></strong>
+                        <button id="ble-power-btn" class="btn btn-sm btn-success">Turn ON</button>
+                      </div>
+                      
+                      <hr>
+                      
+                      <strong>Diagnostics:</strong>
+                      <p class="mb-1">Time Since Frame: <span id="ble-time-since-frame">0.0s</span></p>
+                      <p class="mb-1">Frames Completed: <span id="ble-total-frames">0</span></p>
+                      <p class="mb-1">Total Missed: <span id="ble-total-missed">0</span></p>
+                      <p class="mt-1 mb-2">Missed This Frame: <span id="ble-frame-missed">0</span></p>
+                    </div>
+					
                     <hr>
 
                     <input type="checkbox" class="btn-check" id="toggle-evolution-chart" disabled>
@@ -1146,6 +1162,12 @@
                       <label class="input-group-text" for="ble-chunk-size">Bins</label>
                       <button class="btn btn-primary" type="button" id="ble-chunk-size-btn" title="Apply"> <i class="fas fa-check"></i> </button>
                     </div>
+					
+					<div class="input-group input-group-sm mt-2">
+					  <label class="input-group-text" for="ble-tx-uuid">TX Char UUID</label>
+                      <input type="text" class="form-control" id="ble-tx-uuid" spellcheck="false" placeholder="e.g. beb5483e-...">
+					  <button class="btn btn-primary" type="button" id="ble-tx-uuid-btn" title="Apply"> <i class="fas fa-check"></i> </button>
+					</div>
               
                     <div class="form-check form-switch mt-2">
                       <input class="form-check-input" type="checkbox" role="switch" id="ble-debug-toggle">
