@@ -54,6 +54,8 @@ import { RawData, NPESv1, NPESv1Spectrum, JSONParseError, NPESv2 } from './raw-d
 import { SerialManager, WebSerial, WebUSBSerial } from './serial';
 import { ToastNotification, launchSysNotification } from './notifications';
 import { applyTheming, autoThemeChange } from './global-theming';
+// Imports the Bluetooth code
+import { BLEManager } from './ble';
 
 export interface IsotopeList {
   [key: string]: number[];
@@ -2531,7 +2533,11 @@ function bindInputs(): void {
     'peak-thres': 'peakThres',
     'peak-lag': 'peakLag',
     'seek-width': 'seekWidth',
-    'gauss-sigma': 'gaussSigma'
+    'gauss-sigma': 'gaussSigma',
+	// Links the text boxes for Bluetooth IDs and chunk size to the "Apply" buttons and Enter key.
+    'ble-service-uuid': 'bleServiceUUID',
+    'ble-char-uuid': 'bleCharUUID',
+    'ble-chunk-size': 'bleChunkSize'
   }
   for (const [inputId, settingsName] of Object.entries(settingsEnterPressElements)) {
     const valueElement = <HTMLInputElement>document.getElementById(inputId);
@@ -2552,6 +2558,9 @@ function bindInputs(): void {
   document.getElementById('download-format')!.onchange = event => changeSettings('plotDownload', <HTMLSelectElement>event.target); // Select
   document.getElementById('theme-select')!.onchange = event => changeSettings('theme', <HTMLSelectElement>event.target); // Select
   document.getElementById('list-select')!.onchange = event => changeSettings('list', <HTMLSelectElement>event.target); // Select
+  // Makes the "Enable" and "Debug" switches respond and trigger a save when clicked.
+  document.getElementById('ble-enable-toggle')!.onclick = event => changeSettings('bleEnabled', <HTMLInputElement>event.target);
+  document.getElementById('ble-debug-toggle')!.onclick = event => changeSettings('bleDebugMode', <HTMLInputElement>event.target);
 }
 
 
@@ -2588,6 +2597,14 @@ function loadSettingsDefault(): void {
   (<HTMLInputElement>document.getElementById('peak-lag')).value = plot.peakConfig.lag.toString();
   (<HTMLInputElement>document.getElementById('seek-width')).value = SeekClosest.seekWidth.toString();
   (<HTMLInputElement>document.getElementById('gauss-sigma')).value = plot.gaussSigma.toString();
+  
+  // zmiana
+  (<HTMLInputElement>document.getElementById('ble-enable-toggle')).checked = BLEManager.enabled;
+  document.getElementById('ble-add-device')!.style.display = BLEManager.enabled ? 'inline-block' : 'none';
+  (<HTMLInputElement>document.getElementById('ble-service-uuid')).value = BLEManager.serviceUUID;
+  (<HTMLInputElement>document.getElementById('ble-char-uuid')).value = BLEManager.charUUID;
+  (<HTMLInputElement>document.getElementById('ble-chunk-size')).value = BLEManager.chunkSize.toString();
+  (<HTMLInputElement>document.getElementById('ble-debug-toggle')).checked = BLEManager.debugMode;
 
   const formatSelector = <HTMLSelectElement>document.getElementById('download-format');
   const formatLen = formatSelector.options.length;
@@ -2666,6 +2683,23 @@ function loadSettingsStorage(): void {
 
   setting = loadJSON('newPeakStyle');
   if (typeof setting === 'boolean') plot.peakConfig.newPeakStyle = setting;
+  
+  // Synchronizes the app's memory and the text boxes with the saved Bluetooth data.
+  
+  setting = loadJSON('bleEnabled');
+  if (typeof setting === 'boolean') BLEManager.enabled = setting;
+
+  setting = loadJSON('bleServiceUUID');
+  if (typeof setting === 'string') BLEManager.serviceUUID = setting;
+
+  setting = loadJSON('bleCharUUID');
+  if (typeof setting === 'string') BLEManager.charUUID = setting;
+
+  setting = loadJSON('bleChunkSize');
+  if (typeof setting === 'number') BLEManager.chunkSize = setting;
+
+  setting = loadJSON('bleDebugMode');
+  if (typeof setting === 'boolean') BLEManager.debugMode = setting;
 
   // All of the below is a bit janky, but it works for now
   const themeSelector = <HTMLSelectElement>document.getElementById('theme-select');
@@ -2695,14 +2729,19 @@ function loadSettingsStorage(): void {
 
 
 function changeSettings(name: string, element: HTMLInputElement | HTMLSelectElement): void {
+  console.log("1. changeSettings called for:", name); // ADD THIS
   const stringValue = element.value.trim();
   let result = false;
 
   if (!element.checkValidity() || !stringValue) {
+  console.log("2. Stopped by validity check"); // ADD THIS
     new ToastNotification('settingType'); //popupNotification('setting-type');
     return;
   }
 
+  console.log("3. Entering switch for:", name); // ADD THIS
+  
+  
   switch (name) {
     case 'editMode': {
       const boolVal = (<HTMLInputElement>element).checked;
@@ -2902,6 +2941,37 @@ function changeSettings(name: string, element: HTMLInputElement | HTMLSelectElem
       result = saveJSON(name, boolVal);
       break;
     }
+	// Saves new Bluetooth settings and automatically shows or hides the connection button.
+	case 'bleEnabled': {
+      const boolVal = (<HTMLInputElement>element).checked;
+      BLEManager.enabled = boolVal;
+      document.getElementById('ble-add-device')!.style.display = boolVal ? 'inline-block' : 'none';
+      result = saveJSON(name, boolVal);
+      break;
+    }
+    case 'bleServiceUUID': {
+      BLEManager.serviceUUID = stringValue.toLowerCase();
+      result = saveJSON(name, BLEManager.serviceUUID);
+      break;
+    }
+    case 'bleCharUUID': {
+      BLEManager.charUUID = stringValue.toLowerCase();
+      result = saveJSON(name, BLEManager.charUUID);
+      break;
+    }
+    case 'bleChunkSize': {
+      const numVal = parseInt(stringValue, 10);
+      BLEManager.chunkSize = isNaN(numVal) ? 64 : numVal;
+      result = saveJSON(name, BLEManager.chunkSize);
+      break;
+    }
+    case 'bleDebugMode': {
+      const boolVal = (<HTMLInputElement>element).checked;
+      BLEManager.debugMode = boolVal;
+      result = saveJSON(name, boolVal);
+      break;
+    }
+	// koniec zmiany
     default: {
       new ToastNotification('settingError'); //popupNotification('setting-error');
       return;
@@ -2923,10 +2993,12 @@ function resetMCA(): void {
 /*
 =========================================
   SERIAL CONNECTION DATA
+  zmiana
 =========================================
 */
-
-let serRecorder: SerialManager | undefined;
+// let both clases be accesed by serReccorder
+let serRecorder: SerialManager | BLEManager | undefined;;
+// sets up a global variable to store the active connection
 
 
 document.getElementById('s1')!.onchange = event => selectSerialType(<HTMLInputElement>event.target);
@@ -3015,6 +3087,7 @@ async function listSerial(): Promise<void> {
 
 document.getElementById('serial-add-device')!.onclick = () => requestSerial();
 
+
 async function requestSerial(): Promise<void> {
   try {
     if (navigator.serial) {
@@ -3030,6 +3103,25 @@ async function requestSerial(): Promise<void> {
   }
 }
 
+// Links the main "BLE" button to the function that starts the Bluetooth search., starts sending data
+document.getElementById('ble-add-device')!.onclick = () => requestBLE();
+
+async function requestBLE(): Promise<void> {
+try {
+	//document.getElementById('BLE-mode-hide')!.style.display = 'none'; // TEST zniknia opcji
+    if (serRecorder?.recording) await disconnectPort(true); // Stop existing recordings
+    
+    serRecorder = new BLEManager();
+    await serRecorder.open();
+    document.getElementById('BLE-mode-hide')!.style.display = 'none'; // hides the chrono / histo setting
+    // Automatically trigger the standard UI recording sequence
+    document.getElementById('record-button')!.click();
+    new ToastNotification('serialConnect');
+  } catch(err) {
+    console.error('BLE Connect Error:', err);
+    new ToastNotification('serialConnectError');
+  }
+}
 
 function selectPort(): number {
   const selectedPort = (<HTMLSelectElement>document.getElementById('port-selector')).selectedIndex;
@@ -3136,6 +3228,8 @@ async function disconnectPort(stop = false): Promise<void> {
   if (stop) {
     (<HTMLButtonElement>document.getElementById('stop-button')).disabled = true;
     document.getElementById('record-button')!.classList.remove('d-none');
+	
+	document.getElementById('data-order-wrapper')!.style.display = ''; // show the histo / chrono selection on disconect
 
     endDate = new Date();
   }
@@ -3376,7 +3470,8 @@ function refreshRender(type: DataType, firstLoad = false): void {
     const measTime = serRecorder.getTime() ?? 1000;
     //await serRecorder.startRecord(true); // Maybe?!
 
-    if (SerialManager.orderType === 'hist') {
+// Allows to uptade the hisogram data from BLE????????
+if (SerialManager.orderType === 'hist' || serRecorder instanceof BLEManager) {
       spectrumData.addHist(type, newData);
     } else if (SerialManager.orderType === 'chron') {
       spectrumData.addPulseData(type, newData, SerialManager.adcChannels);
