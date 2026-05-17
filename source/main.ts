@@ -388,6 +388,30 @@ document.body.onload = async function(): Promise<void> {
 
   if (localStorageAvailable) checkAutosave(); // Check for the last autosaved spectrum
 
+  // 1. Force the UI to show the correct pane based on saved settings at startup
+  const bleToggle = document.getElementById('ble-enable-toggle') as HTMLInputElement;
+  if (bleToggle) changeSettings('bleEnabled', bleToggle); 
+
+  // 2. Bind the new BLE dashboard buttons
+  document.getElementById('ble-connect-btn')!.onclick = () => requestBLE();
+  document.getElementById('ble-record-button')!.onclick = () => startBLERecord();
+  document.getElementById('ble-stop-button')!.onclick = () => stopBLERecord();
+  document.getElementById('ble-power-btn')!.onclick = () => toggleBLEPower();
+
+  // 3. Hardware Safety: Listen for silent disconnects (e.g. out of range, dead battery)
+  window.addEventListener('ble-unexpected-disconnect', () => {
+    stopBLERecord(); 
+    document.getElementById('ble-device-name')!.innerText = 'Disconnected';
+    document.getElementById('ble-device-name')!.className = 'fw-bold text-danger';
+    
+	(<HTMLButtonElement>document.getElementById('ble-connect-btn')).disabled = false;
+    (<HTMLButtonElement>document.getElementById('ble-record-button')).disabled = true;
+    (<HTMLButtonElement>document.getElementById('ble-stop-button')).disabled = true;
+    (<HTMLButtonElement>document.getElementById('ble-power-btn')).disabled = true;
+    
+    new ToastNotification('serialDisconnect');
+  });
+
   document.getElementById('loading')?.remove(); // Delete Loading Thingymajig
 };
 
@@ -987,12 +1011,20 @@ function updateSpectrumCounts() {
 
   if (sCounts) document.getElementById('data-icon')!.classList.remove('d-none');
   if (bgCounts) document.getElementById('background-icon')!.classList.remove('d-none');
+  const bleSpec = document.getElementById('ble-total-spec-cts');
+  if (bleSpec) bleSpec.innerText = sCounts.toString();
+  const bleBg = document.getElementById('ble-total-bg-cts');
+  if (bleBg) bleBg.innerText = bgCounts.toString();
 }
 
 
 function updateSpectrumTime() {
   document.getElementById('spec-time')!.innerText = getRecordTimeStamp(spectrumData.dataTime);
   document.getElementById('bg-time')!.innerText = getRecordTimeStamp(spectrumData.backgroundTime);
+  const bleSpecTime = document.getElementById('ble-spec-time');
+  if (bleSpecTime) bleSpecTime.innerText = getRecordTimeStamp(spectrumData.dataTime);
+  const bleBgTime = document.getElementById('ble-bg-time');
+  if (bleBgTime) bleBgTime.innerText = getRecordTimeStamp(spectrumData.backgroundTime);
 }
 
 
@@ -1116,7 +1148,9 @@ function clickEvent(data: PlotMouseEvent): void {
     const xClickData = dataPointX.toFixed(2);
 
     document.getElementById('click-data')!.innerText = xClickData + data.points[0].xaxis.ticksuffix + ': ' + dataPointY.toFixed(2) + data.points[0].yaxis.ticksuffix;
-
+	const bleClick = document.getElementById('ble-click-data');
+  if (bleClick) bleClick.innerText = document.getElementById('click-data')!.innerText;
+	
     for (const id of calClick) {
       (<HTMLInputElement>document.getElementById(`bin-${id}`)).value = xClickData;
       oldCalVals[id] = dataPointX;
@@ -1568,6 +1602,11 @@ document.getElementById('toggle-evolution-chart')!.onclick = event => toogleEvol
 function toogleEvolChart(enabled: boolean): void {
   const buttonLabel = document.getElementById('toggle-evol-chart-label')!;
   buttonLabel.innerHTML = enabled ? '<i class="fa-solid fa-eye-slash fa-beat-fade"></i> Hide Evolution' : '<i class="fa-solid fa-eye"></i> Show Evolution';
+
+  const bleButtonLabel = document.getElementById('ble-toggle-evol-chart-label');
+  if (bleButtonLabel) {
+    bleButtonLabel.innerHTML = enabled ? '<i class="fa-solid fa-eye-slash fa-beat-fade"></i> Hide Evolution' : '<i class="fa-solid fa-eye"></i> Show Evolution';
+  }
 
   plot.setChartType(enabled ? 'evolution' : 'default', spectrumData, cpsValues);
 
@@ -2601,7 +2640,6 @@ function loadSettingsDefault(): void {
   
   // zmiana
   (<HTMLInputElement>document.getElementById('ble-enable-toggle')).checked = BLEManager.enabled;
-  document.getElementById('ble-add-device')!.style.display = BLEManager.enabled ? 'inline-block' : 'none';
   (<HTMLInputElement>document.getElementById('ble-service-uuid')).value = BLEManager.serviceUUID;
   (<HTMLInputElement>document.getElementById('ble-char-uuid')).value = BLEManager.charUUID;
   (<HTMLInputElement>document.getElementById('ble-tx-uuid')).value = BLEManager.txUUID;
@@ -2950,7 +2988,17 @@ function changeSettings(name: string, element: HTMLInputElement | HTMLSelectElem
 	case 'bleEnabled': {
       const boolVal = (<HTMLInputElement>element).checked;
       BLEManager.enabled = boolVal;
-      document.getElementById('ble-add-device')!.style.display = boolVal ? 'inline-block' : 'none';
+      
+      document.getElementById('serial-interface-pane')!.classList.toggle('d-none', boolVal);
+      document.getElementById('ble-interface-pane')!.classList.toggle('d-none', !boolVal);
+
+      const tabBtn = document.getElementById('serial-tab')!;
+      tabBtn.innerHTML = boolVal 
+        ? '<i class="fab fa-bluetooth"></i> BLE Connection <span class="align-middle border border-light rounded-circle spinner-grow spinner-grow-sm recording-spinner text-danger d-none" role="status"><span class="visually-hidden">Recording...</span></span>' 
+        : '<i class="fa-solid fa-network-wired"></i> Serial Connection <span class="align-middle border border-light rounded-circle spinner-grow spinner-grow-sm recording-spinner text-danger d-none" role="status"><span class="visually-hidden">Recording...</span></span>';
+      
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+
       result = saveJSON(name, boolVal);
       break;
     }
@@ -3121,26 +3169,68 @@ async function requestSerial(): Promise<void> {
   }
 }
 
-// Links the main "BLE" button to the function that starts the Bluetooth search., starts sending data
-document.getElementById('ble-add-device')!.onclick = () => requestBLE();
 
 async function requestBLE(): Promise<void> {
-try {
-	document.getElementById('BLE-mode-hide')!.style.display = 'none'; // TEST zniknia opcji
-	document.getElementById('BLE-mode-show')!.classList.remove('d-none');
-    if (serRecorder?.recording) await disconnectPort(true); // Stop existing recordings
+  try {
+    if (serRecorder?.recording) await disconnectPort(true);
+    if (serRecorder instanceof BLEManager) await serRecorder.close(); 
     
     serRecorder = new BLEManager();
     await serRecorder.open();
-	document.getElementById('BLE-mode-hide')!.style.display = 'none'; // toggle the ble UI
-    document.getElementById('BLE-mode-show')!.classList.remove('d-none');
+    
     document.getElementById('ble-device-name')!.innerText = (serRecorder as BLEManager).deviceName;
-    // Automatically trigger the standard UI recording sequence
-    document.getElementById('record-button')!.click();
+    document.getElementById('ble-device-name')!.className = 'fw-bold text-success';
+    
+	(<HTMLButtonElement>document.getElementById('ble-record-button')).disabled = false;
+    (<HTMLButtonElement>document.getElementById('ble-power-btn')).disabled = false;
+    
     new ToastNotification('serialConnect');
   } catch(err) {
     console.error('BLE Connect Error:', err);
     new ToastNotification('serialConnectError');
+  }
+}
+
+async function startBLERecord(): Promise<void> {
+  if (!(serRecorder instanceof BLEManager)) return;
+  recordingType = 'data'; 
+  removeFile(recordingType);
+  startDate = new Date();
+  
+  await serRecorder.startRecord(false); 
+  
+	(<HTMLButtonElement>document.getElementById('ble-record-button')).disabled = true;
+    (<HTMLButtonElement>document.getElementById('ble-stop-button')).disabled = false;
+	(<HTMLInputElement>document.getElementById('ble-toggle-evolution-chart')).disabled = false;
+  
+  const spinnerElements = document.getElementsByClassName('recording-spinner');
+  for (let i = 0; i < spinnerElements.length; i++) {
+      spinnerElements[i].classList.remove('d-none');
+  }
+  
+  refreshRender(recordingType, true); 
+}
+
+async function stopBLERecord(): Promise<void> {
+  if (!(serRecorder instanceof BLEManager)) return;
+  await serRecorder.stopRecord();
+  endDate = new Date();
+  
+    (<HTMLButtonElement>document.getElementById('ble-record-button')).disabled = false;
+    (<HTMLButtonElement>document.getElementById('ble-stop-button')).disabled = true;
+  
+  const spinnerElements = document.getElementsByClassName('recording-spinner');
+  for (let i = 0; i < spinnerElements.length; i++) {
+      spinnerElements[i].classList.add('d-none');
+  }
+}
+
+async function toggleBLEPower(): Promise<void> {
+  if (serRecorder instanceof BLEManager) {
+    const isNowOn = await serRecorder.togglePower();
+    const btn = document.getElementById('ble-power-btn')!;
+    btn.innerText = isNowOn ? 'Turn OFF' : 'Turn ON';
+    btn.className = isNowOn ? 'btn btn-sm ms-auto btn-danger' : 'btn btn-sm ms-auto btn-success';
   }
 }
 
@@ -3511,7 +3601,7 @@ if (SerialManager.orderType === 'hist' || serRecorder instanceof BLEManager) {
     const deltaLastRefresh = measTime - lastUpdate;
     lastUpdate = measTime;
 
-    const cpsValue = ((SerialManager.orderType === 'chron') ? newData.length : newData.reduce((acc, curr) => acc+curr, 0)) / deltaLastRefresh * 1000;
+	const cpsValue = ((SerialManager.orderType === 'chron') ? newData.length : newData.reduce((acc: number, curr: number) => acc+curr, 0)) / deltaLastRefresh * 1000;
     cpsValues.push(cpsValue);
 
     /* // Only update whenever counts are received
@@ -3526,15 +3616,26 @@ if (SerialManager.orderType === 'hist' || serRecorder instanceof BLEManager) {
     }
     */
 
-    document.getElementById('cps')!.innerText = cpsValue.toFixed(1) + ' cps';
+	document.getElementById('cps')!.innerText = cpsValue.toFixed(1) + ' cps';
 
-    const mean = cpsValues.reduce((acc, curr) => acc+curr, 0) / cpsValues.length;
-    const std = Math.sqrt(cpsValues.reduce((acc, curr) => acc + (curr - mean)**2, 0) / (cpsValues.length - 1));
+    const mean = cpsValues.reduce((acc: number, curr: number) => acc+curr, 0) / cpsValues.length;
+    const std = Math.sqrt(cpsValues.reduce((acc: number, curr: number) => acc + (curr - mean)**2, 0) / (cpsValues.length - 1));
 
-    document.getElementById('avg-cps')!.innerText = 'Avg: ' + mean.toFixed(1);
-    document.getElementById('avg-cps-std')!.innerHTML = ` &plusmn; ${std.toFixed(1)} cps (&#916; ${Math.round(std/mean*100)}%)`;
+    const avgCpsString = 'Avg: ' + mean.toFixed(1);
+    const stdString = ` \xB1 ${std.toFixed(1)} cps (\u0394 ${Math.round(std/mean*100)}%)`;
 
-    // --- ADD BLE DIAGNOSTICS UI UPDATE ---
+    document.getElementById('avg-cps')!.innerText = avgCpsString;
+    document.getElementById('avg-cps-std')!.innerHTML = stdString;
+
+    // Route CPS to new BLE Pane elements
+    const bleCps = document.getElementById('ble-cps');
+    if (bleCps) bleCps.innerText = cpsValue.toFixed(1) + ' cps';
+    const bleAvgCps = document.getElementById('ble-avg-cps');
+    if (bleAvgCps) bleAvgCps.innerText = avgCpsString;
+    const bleAvgStd = document.getElementById('ble-avg-cps-std');
+    if (bleAvgStd) bleAvgStd.innerHTML = stdString;
+
+    // --- ADD BLE FRAME DIAGNOSTICS UI UPDATE ---
     if (serRecorder instanceof BLEManager && serRecorder.recording && serRecorder.lastFrameTime > 0) {
       const timeSince = (performance.now() - serRecorder.lastFrameTime) / 1000;
       document.getElementById('ble-time-since-frame')!.innerText = `${timeSince.toFixed(1)}s`;
@@ -3542,7 +3643,7 @@ if (SerialManager.orderType === 'hist' || serRecorder instanceof BLEManager) {
       document.getElementById('ble-total-missed')!.innerText = serRecorder.totalMissedChunks.toString();
       document.getElementById('ble-frame-missed')!.innerText = serRecorder.currentFrameMissedChunks.toString();
     }
-    // -------------------------------------
+    // -------------------------------------------
 
     updateSpectrumCounts();
 

@@ -1,34 +1,41 @@
 import { SerialManager } from './serial';
 
 export class BLEManager {
-  static enabled = false;
-  static serviceUUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
-  static charUUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
-  static txUUID = '';
-  static chunkSize = 64;
-  static debugMode = false;
 
-  isOpen = false;
-  recording = false;
-  private device: any | undefined;
-  private characteristic: any | undefined;
+  // Global Config Variables
+  static serviceUUID = '';
+  static charUUID = '';
+  static txUUID = ''; 
+  static chunkSize = 256;
+  static enabled = false;
+  static debugMode = false; // Fixes the debugMode error
+
+  public isOpen = false;
+  public recording = false;
+  public port: any = { isOpen: false }; // Dummy port object to satisfy main.ts
   
-  private baseHist: number[] = [];
-  private bufferPulseData: number[] = [];
-  private startTime = 0;
-  private timeDone = 0;
-  
-  // Device & Control
+  // Device & Power State
   public deviceName: string = 'Unknown';
   public powerState: boolean = false; 
   private txCharacteristic: any = null;
-  
-  // Diagnostics
+
+  // Diagnostic Trackers
   public lastFrameTime: number = 0;
   public framesCompleted: number = 0;
   public totalMissedChunks: number = 0;
   public currentFrameMissedChunks: number = 0;
-  private expectedNextBin: number = 0
+  private expectedNextBin: number = 0;
+
+  // Data Arrays (Changed to number[] to match base interface)
+  private bufferPulseData: number[] = Array(SerialManager.adcChannels).fill(0);
+  private baseHist: number[] = Array(SerialManager.adcChannels).fill(0);
+
+  // Time Trackers
+  private recordStartTime: number = 0;
+  private totalRecordedTime: number = 0;
+
+  private device: any;
+  private characteristic: any;
 
   async open(): Promise<void> {
     if (!this.device) {
@@ -37,15 +44,19 @@ export class BLEManager {
         acceptAllDevices: true,
         optionalServices: [BLEManager.serviceUUID]
       });
+
+      this.device.addEventListener('gattserverdisconnected', () => {
+        console.warn("BLE Device disconnected unexpectedly!");
+        window.dispatchEvent(new Event('ble-unexpected-disconnect'));
+      });
     }
+
     const server = await this.device.gatt.connect();
     const service = await server.getPrimaryService(BLEManager.serviceUUID);
     this.characteristic = await service.getCharacteristic(BLEManager.charUUID);
 
-	// Get device name
-	this.deviceName = this.device.name || 'Unknown Device';
-	
-	// Attempt to connect to TX Characteristic
+    this.deviceName = this.device.name || 'Unknown Device';
+
     try {
       if (BLEManager.txUUID) {
         this.txCharacteristic = await service.getCharacteristic(BLEManager.txUUID);
@@ -53,7 +64,7 @@ export class BLEManager {
     } catch (err) {
       console.warn('TX Characteristic not found or invalid UUID.', err);
     }
-	
+
     this.characteristic.addEventListener('characteristicvaluechanged', (e: Event) => {
       const target = e.target as any;
       if (!target.value || !this.recording) return;
@@ -64,7 +75,6 @@ export class BLEManager {
       let startBin = d.getUint16(0, true);
       let numBins = (target.value.byteLength - 2) / 4;
 
-// --- DIAGNOSTICS LOGIC ---
       if (startBin === 0) {
         this.lastFrameTime = performance.now();
         this.framesCompleted++;
@@ -74,12 +84,9 @@ export class BLEManager {
         this.currentFrameMissedChunks++;
       }
       this.expectedNextBin = startBin + numBins;
-      // -------------------------
-	  
+
       for (let i = 0; i < numBins; i++) {
         const binIndex = startBin + i;
-        
-        // Drop data that exceeds the set ADC channels
         if (binIndex >= SerialManager.adcChannels) continue; 
       
         const newValue = d.getUint32(2 + (i * 4), true);
@@ -94,37 +101,7 @@ export class BLEManager {
 
     await this.characteristic.startNotifications();
     this.isOpen = true;
-  }
-
-  async close(): Promise<void> {
-    this.isOpen = false;
-    this.recording = false;
-    try {
-        await this.characteristic?.stopNotifications();
-        this.device?.gatt?.disconnect();
-    } catch(e) {}
-  }
-
-  async startRecord(resume = false): Promise<void> {
-    if (!this.isOpen) await this.open();
-    if (!resume) {
-      this.bufferPulseData = Array(SerialManager.adcChannels).fill(0);
-	  this.baseHist = Array(SerialManager.adcChannels).fill(0);
-      this.timeDone = 0;
-    }
-    this.startTime = performance.now();
-    this.recording = true;
-  }
-
-  async stopRecord(): Promise<void> {
-    this.recording = false;
-    this.timeDone += performance.now() - this.startTime;
-  }
-
-  getData(): number[] {
-    const copyArr = [...this.bufferPulseData];
-    this.bufferPulseData = Array(SerialManager.adcChannels).fill(0);
-    return copyArr;
+    this.port.isOpen = true;
   }
 
   async togglePower(): Promise<boolean> {
@@ -134,35 +111,69 @@ export class BLEManager {
     await this.txCharacteristic.writeValueWithoutResponse(payload);
     return this.powerState;
   }
-  getTime(): number {
-    return (this.recording ? (performance.now() - this.startTime + this.timeDone) : this.timeDone);
-  }
-  
-  // --- Interface Stubs for SerialManager Compatibility ---
-  port: any = null;
 
-  isThisPort(portToCheck: any): boolean {
+  async close(): Promise<void> {
+    this.recording = false;
+    this.isOpen = false;
+    this.port.isOpen = false;
+    if (this.characteristic) {
+        try {
+            await this.characteristic.stopNotifications();
+        } catch (e) {
+            console.error('Error stopping notifications', e);
+        }
+    }
+    if (this.device && this.device.gatt.connected) {
+      this.device.gatt.disconnect();
+    }
+  }
+
+  isThisPort(): boolean {
     return false; 
   }
 
-  flushRawData(): void {
-    // Do nothing
+  async startRecord(clear: boolean): Promise<void> {
+    this.recording = true;
+    this.recordStartTime = performance.now();
+    if (clear) {
+      this.bufferPulseData.fill(0);
+      this.baseHist.fill(0);
+      this.framesCompleted = 0;
+      this.totalMissedChunks = 0;
+      this.currentFrameMissedChunks = 0;
+      this.totalRecordedTime = 0;
+    }
   }
 
-  hideConsole(): void {
-    // Do nothing
+  async stopRecord(): Promise<void> {
+    if (this.recording) {
+      this.totalRecordedTime += performance.now() - this.recordStartTime;
+    }
+    this.recording = false;
   }
 
-  showConsole(): void {
-    // Do nothing
+  // Matches SerialManager interface calls in main.ts
+  getData(): number[] {
+    const dataCopy = [...this.bufferPulseData];
+    this.bufferPulseData.fill(0);
+    return dataCopy;
   }
 
-  sendString(str: string): void {
-    // Do nothing (BLE TX not implemented yet)
+  getTime(): number {
+    if (this.recording) return this.totalRecordedTime + (performance.now() - this.recordStartTime);
+    return this.totalRecordedTime;
   }
 
-  getRawData(): string {
-    return ''; 
-  }
+  getBaudRate(): number { return 0; }
+  async changeBaudRate(): Promise<void> {}
+  async requestPort(): Promise<void> {}
   
+  // Synchronous string return to match SerialManager
+  getRawData(): string { return ''; }
+  async flushRawData(): Promise<void> {}
+  
+  // Must return promises
+  async showConsole(): Promise<void> {}
+  async hideConsole(): Promise<void> {}
+  async sendString(): Promise<void> {}
 }
