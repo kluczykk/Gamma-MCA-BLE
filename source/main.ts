@@ -394,9 +394,9 @@ document.body.onload = async function(): Promise<void> {
 
   // 2. Bind the new BLE dashboard buttons
   document.getElementById('ble-connect-btn')!.onclick = () => requestBLE();
-  document.getElementById('ble-record-button')!.onclick = () => startBLERecord();
-  document.getElementById('ble-stop-button')!.onclick = () => stopBLERecord();
   document.getElementById('ble-power-btn')!.onclick = () => toggleBLEPower();
+  document.getElementById('ble-record-button')!.onclick = () => startRecord(false, 'data');
+  document.getElementById('ble-stop-button')!.onclick = () => disconnectPort(true);
 
   // 3. Hardware Safety: Listen for silent disconnects (e.g. out of range, dead battery)
   window.addEventListener('ble-unexpected-disconnect', () => {
@@ -1011,20 +1011,12 @@ function updateSpectrumCounts() {
 
   if (sCounts) document.getElementById('data-icon')!.classList.remove('d-none');
   if (bgCounts) document.getElementById('background-icon')!.classList.remove('d-none');
-  const bleSpec = document.getElementById('ble-total-spec-cts');
-  if (bleSpec) bleSpec.innerText = sCounts.toString();
-  const bleBg = document.getElementById('ble-total-bg-cts');
-  if (bleBg) bleBg.innerText = bgCounts.toString();
 }
 
 
 function updateSpectrumTime() {
   document.getElementById('spec-time')!.innerText = getRecordTimeStamp(spectrumData.dataTime);
   document.getElementById('bg-time')!.innerText = getRecordTimeStamp(spectrumData.backgroundTime);
-  const bleSpecTime = document.getElementById('ble-spec-time');
-  if (bleSpecTime) bleSpecTime.innerText = getRecordTimeStamp(spectrumData.dataTime);
-  const bleBgTime = document.getElementById('ble-bg-time');
-  if (bleBgTime) bleBgTime.innerText = getRecordTimeStamp(spectrumData.backgroundTime);
 }
 
 
@@ -1148,8 +1140,6 @@ function clickEvent(data: PlotMouseEvent): void {
     const xClickData = dataPointX.toFixed(2);
 
     document.getElementById('click-data')!.innerText = xClickData + data.points[0].xaxis.ticksuffix + ': ' + dataPointY.toFixed(2) + data.points[0].yaxis.ticksuffix;
-	const bleClick = document.getElementById('ble-click-data');
-  if (bleClick) bleClick.innerText = document.getElementById('click-data')!.innerText;
 	
     for (const id of calClick) {
       (<HTMLInputElement>document.getElementById(`bin-${id}`)).value = xClickData;
@@ -1598,6 +1588,10 @@ function toggleCalChart(enabled: boolean): void {
 
 
 document.getElementById('toggle-evolution-chart')!.onclick = event => toogleEvolChart((<HTMLInputElement>event.target).checked);
+const bleEvolToggle = document.getElementById('ble-toggle-evolution-chart');
+if (bleEvolToggle) {
+  bleEvolToggle.onclick = event => toogleEvolChart((<HTMLInputElement>event.target).checked);
+}
 
 function toogleEvolChart(enabled: boolean): void {
   const buttonLabel = document.getElementById('toggle-evol-chart-label')!;
@@ -2772,19 +2766,14 @@ function loadSettingsStorage(): void {
 
 
 function changeSettings(name: string, element: HTMLInputElement | HTMLSelectElement): void {
-  console.log("1. changeSettings called for:", name); // ADD THIS
   const stringValue = element.value.trim();
   let result = false;
 
   if (!element.checkValidity() || !stringValue) {
-  console.log("2. Stopped by validity check"); // ADD THIS
     new ToastNotification('settingType'); //popupNotification('setting-type');
     return;
   }
 
-  console.log("3. Entering switch for:", name); // ADD THIS
-  
-  
   switch (name) {
     case 'editMode': {
       const boolVal = (<HTMLInputElement>element).checked;
@@ -3054,7 +3043,6 @@ function resetMCA(): void {
   zmiana
 =========================================
 */
-// let both clases be accesed by serReccorder
 let serRecorder: SerialManager | BLEManager | undefined;;
 // sets up a global variable to store the active connection
 
@@ -3153,7 +3141,6 @@ async function listSerial(): Promise<void> {
 
 document.getElementById('serial-add-device')!.onclick = () => requestSerial();
 
-
 async function requestSerial(): Promise<void> {
   try {
     if (navigator.serial) {
@@ -3191,39 +3178,6 @@ async function requestBLE(): Promise<void> {
   }
 }
 
-async function startBLERecord(): Promise<void> {
-  if (!(serRecorder instanceof BLEManager)) return;
-  recordingType = 'data'; 
-  removeFile(recordingType);
-  startDate = new Date();
-  
-  await serRecorder.startRecord(false); 
-  
-	(<HTMLButtonElement>document.getElementById('ble-record-button')).disabled = true;
-    (<HTMLButtonElement>document.getElementById('ble-stop-button')).disabled = false;
-	(<HTMLInputElement>document.getElementById('ble-toggle-evolution-chart')).disabled = false;
-  
-  const spinnerElements = document.getElementsByClassName('recording-spinner');
-  for (let i = 0; i < spinnerElements.length; i++) {
-      spinnerElements[i].classList.remove('d-none');
-  }
-  
-  refreshRender(recordingType, true); 
-}
-
-async function stopBLERecord(): Promise<void> {
-  if (!(serRecorder instanceof BLEManager)) return;
-  await serRecorder.stopRecord();
-  endDate = new Date();
-  
-    (<HTMLButtonElement>document.getElementById('ble-record-button')).disabled = false;
-    (<HTMLButtonElement>document.getElementById('ble-stop-button')).disabled = true;
-  
-  const spinnerElements = document.getElementsByClassName('recording-spinner');
-  for (let i = 0; i < spinnerElements.length; i++) {
-      spinnerElements[i].classList.add('d-none');
-  }
-}
 
 async function toggleBLEPower(): Promise<void> {
   if (serRecorder instanceof BLEManager) {
@@ -3297,11 +3251,17 @@ async function startRecord(pause = false, type: DataType): Promise<void> {
     startDate = new Date();
   }
 
-  (<HTMLInputElement>document.getElementById('toggle-evolution-chart')).disabled = false;
-  (<HTMLButtonElement>document.getElementById('stop-button')).disabled = false;
-  document.getElementById('pause-button')!.classList.remove('d-none');
-  document.getElementById('record-button')!.classList.add('d-none');
-  document.getElementById('resume-button')!.classList.add('d-none');
+  if (serRecorder instanceof BLEManager) {
+    (<HTMLButtonElement>document.getElementById('ble-record-button')).disabled = true;
+    (<HTMLButtonElement>document.getElementById('ble-stop-button')).disabled = false;
+    (<HTMLInputElement>document.getElementById('ble-toggle-evolution-chart')).disabled = false;
+  } else {    
+    (<HTMLInputElement>document.getElementById('toggle-evolution-chart')).disabled = false;
+    (<HTMLButtonElement>document.getElementById('stop-button')).disabled = false;
+    document.getElementById('pause-button')!.classList.remove('d-none');
+    document.getElementById('record-button')!.classList.add('d-none');
+    document.getElementById('resume-button')!.classList.add('d-none');
+  }
 
   const spinnerElements = document.getElementsByClassName('recording-spinner');
 
@@ -3337,11 +3297,18 @@ async function disconnectPort(stop = false): Promise<void> {
   //(<HTMLInputElement>document.getElementById('toggle-evolution-chart')).disabled = true;
 
   if (stop) {
-    (<HTMLButtonElement>document.getElementById('stop-button')).disabled = true;
-    document.getElementById('record-button')!.classList.remove('d-none');
-	
-	document.getElementById('BLE-mode-hide')!.style.display = '';  // untoggle BLE UI
-    document.getElementById('BLE-mode-show')!.classList.add('d-none');
+    if (serRecorder instanceof BLEManager) {
+      (<HTMLButtonElement>document.getElementById('ble-record-button')).disabled = false;
+      (<HTMLButtonElement>document.getElementById('ble-stop-button')).disabled = true;
+    } else {
+      (<HTMLButtonElement>document.getElementById('stop-button')).disabled = true;
+      document.getElementById('record-button')!.classList.remove('d-none');
+    }
+    
+    const bleHide = document.getElementById('BLE-mode-hide');
+    if (bleHide) bleHide.style.display = ''; 
+    const bleShow = document.getElementById('BLE-mode-show');
+    if (bleShow) bleShow.classList.add('d-none');
 
     endDate = new Date();
   }
@@ -3601,7 +3568,8 @@ if (SerialManager.orderType === 'hist' || serRecorder instanceof BLEManager) {
     const deltaLastRefresh = measTime - lastUpdate;
     lastUpdate = measTime;
 
-	const cpsValue = ((SerialManager.orderType === 'chron') ? newData.length : newData.reduce((acc: number, curr: number) => acc+curr, 0)) / deltaLastRefresh * 1000;
+	const isChron = SerialManager.orderType === 'chron' && !(serRecorder instanceof BLEManager);
+    const cpsValue = (isChron ? newData.length : newData.reduce((acc: number, curr: number) => acc + curr, 0)) / deltaLastRefresh * 1000;
     cpsValues.push(cpsValue);
 
     /* // Only update whenever counts are received
